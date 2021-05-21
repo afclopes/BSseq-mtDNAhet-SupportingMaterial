@@ -1,0 +1,545 @@
+---
+title: "SingleCell-SearchMtDNA"
+author: "A. Lopes"
+date: "06/07/2020"
+output: html_document
+---
+
+
+# Single Cell Analysis: in search for mitochondrial DNA
+
+Data to be analysed was a series called: GSE68642	Parallel single-cell bisulfite- and RNA-sequencing link transcriptional and epigenetic heterogeneity [Bisulfite-Seq]. From the paper https://www.nature.com/articles/nmeth.3728#Sec1 . This folder contains a number of different files all of which are .cov.gz
+
+These files should have the counts of methylated reads and total reads covering each CpG for each sample, including mapping of sequencing reads to a reference genome. It should also contain the position of the reads. In a format similar to the following:
+
+Tab separated the methylation extractor output looks like this:
+1. seq-ID
+2. methylation state
+3. chromosome
+4. start position (= end position) --> strange. but very good to know. we will only get the position of the CpG site, not the entire sequence read
+5. methylation call
+
+Methylated   cytosines   will   receive   a   '+'  orientation,   unmethylated   cytosines   will  receive   a   '-' orientation.
+
+
+Let's start by loading the packages necessary
+
+```{r setup, include=FALSE}
+library(knitr)
+#install.packages("BiocManager")
+#BiocManager::install("dmrseq")
+library("dmrseq")
+library(dmrseq)
+
+#BiocManager::install("bsseq")
+library(bsseq)
+```
+
+
+Now let's try to open a file:
+### Atempt 1:
+
+```{r}
+
+#infile <- system.file("~/Documents/Cambridge/Postdoc/R/OnlineData_Rplaying/Rmarkdown/GSE68642_coverage/Serum_H10.cov.gz",
+ #                       package = 'bsseq')
+
+bismarkBSseq <- read.bismark(files = "~/Documents/Cambridge/Postdoc/SingleCellOmics/BSseqSearchMtDNA/Rmarkdown/GSE68642_coverage/Serum_H10.cov.gz",
+                             #sampleNames="~/Documents/Cambridge/Postdoc/R/OnlineData_Rplaying/Rmarkdown/data/data/samples/samples.csv",
+                               rmZeroCov = TRUE,
+                               strandCollapse = FALSE,
+                               verbose = TRUE,
+                             #filetype="cytosineReport"
+                             )
+bismarkBSseq
+
+sapply(assays(bismarkBSseq, withDimnames = FALSE), class)
+
+bismarkBSseq
+```
+
+Turns out that this data still does not give me the information that I want. To extract the data from the .cov.gz files, the easiest way is to use the software SeqMonk.
+
+What we learnt in SeqMonk:
+1. mtDNA is sequenced
+2. Coverage for CpG sites are given by the methylated and non-methylated counts
+3. Whole fragment sequence cannot be seen
+4. Whole fragment size also cannot be seen
+5. Closest CpG site to our mutation has a coverage of only 18 reads
+6. CpG sites in the nucleus have a very big range of coverage with an average close to 0 but outliers passing 100 reads per CpG. While in mitochondria, the average is around 7, with the highest coverage of around 60 reads per CpG.
+7. Only CpGs were measured, but our mutation is the C in CTG, also measured as CpH -> this should be able to be changed if we have the raw files
+
+![C5024T](Screenshot-C5024T.png)
+
+In fact, we can see below the numbers for measures of CpH. These usually are not methylated as seen in the table. But should be measured. 
+
+
+```{r}
+
+sample_stats<-read.csv("~/Documents/Cambridge/Postdoc/SingleCellOmics/BSseqSearchMtDNA/Rmarkdown/data/data/samples/samples_stats.csv",header=TRUE,sep="\t")
+
+head(sample_stats)
+```
+
+
+Bismark comes with a supplementary bismark_methylation_extractorscript whichoperates on Bismark result files and extracts the methylation call for every single C *analysed*. The position of every single C will be written out to a new output file, depending on its context (CpG, CHG or CHH). Alternatively,  the  output  of  the methylation extractor can be transformed into a bedGraphfile using the option --bedGraph. This step can also be accomplished from the methylation extractor output using the stand-alone script bismark2bedGraph. Optionally, the bedGraph counts outputcan  be  used  to  generate  a  genome-wide  cytosine  report which  reports  the  number  on  every single CpG (optionally every single cytosine) in the genome, *irrespective of whether it was covered by any reads  or  not*.  As  this  type  of report  is  informative  for  cytosines  on  both  strands  the output  may  be fairly  large  (~46mnCpG  positions  or  >1.2bn  total  cytosine  positionsin the human genome...).
+
+
+**_The question is: if our mutation changes the C to T, will we still be able to see the sequence? In that case, the C will not be transformed to a T when bisulfite treated, because it will be already a T..._**
+
+
+What does Bismark do? Sequence  reads  are  first  transformed  into  fully  bisulfite-converted  forward  (C->T)  and  reverse  read (G->A  conversion  of  the  forward strand) versions,  before they  are *aligned to  similarly  converted versions of the genome* (also C->T and G->A converted) [so aligned to theoretical bisulfite treated genome]. Sequence reads that produce a unique best alignment from the  four  alignment  processes  against  the  bisulfite  genomes (which  are  running  in parallel) are then compared to the normal genomic sequence and the methylation state of all cytosine positions in the read is inferred.
+
+This means that if there is a mutation in the gene, this will not be looked at with Bismark because it is not a C (bisulfite treated or like the original genome).
+
+
+### Open Questions:
+
+1. **How does Bismark and such deal with PCR induced error in the sequences?**
+
+2. can we open the fastq files? similar to with RNA-seq? 
+
+3. can i see the raw sequences? can i align the raw sequences to the genome and stop further processing before looking at Cs?
+
+
+## How to get raw data from published papers?
+
+Find more info at: https://www.youtube.com/watch?v=q74hmmDFT98
+
+GEO (Gene Expression Omnibus) is the website area of NCBI that stores info about a study. In there we can find the metadata of the study and intermediately processed data in the supplementary files. The metadata are stored as: SOFT formatted family file(s), MINiML formatted family file(s), and Series Matrix File(s) stored in TXT. 
+
+A GEO study will have a GSE number. And a GSE number will have many experiments attached to it. Each experiment will have a GSM number. 
+
+A GEO  study will also have a SRA study number. And a SRA (Short Read Archive) study will have a number starting with SRP. A SRA study with a SRP number will have many SRX numbers for each experiment. Each SRX number will have one SRR number which refers to the SRA run. If you click on the SRR number, it will take you to a new page, where at the top you will find Download > FASTA/FASTQ files. But if you click to download these, your file will have your pair reads mixed together. Every 2 lines there will be the matching paired run, and to separate these will be a nightmare. So, another solution is to use one of two websites.
+
+The NCBI is the American database for sequencing data. Data from here is mirrored in two other databases, the DDBJ (DNA Data Bank of Japan) and the EBI ENA (European Bioinformatics Institute European Nucleotide Archive).
+
+In the EBI ENA, you can search for the GSE number, find the SRR number, and search for the file that you want to download. Here you need to 'select columns' to show the 'title of your sample', then 'hide columns' to scroll through the sample options. You can also select the paired sequencing runs separately, and choose the file format that you are interested in. You can also download many files at the same time, or even all of the samples if you wish, by going to 'Bulk download Files'. But remember that all files downloaded will have the names as SRR numbers which you will then have to relate back to the sample names.
+
+The second option is to use the sra-explorer.info website. In here you can search for your GSE number (but this doesn't always work) or your SRA number. From here, you can select which samples you are interested in and find different ways of downloading your files. For example with a bash code which will give you the files together with their SRR number, GSM number, sample name, organism, and data type (ChIP-Seq).
+
+Another option is to use the sra-toolkit software to download your raw data files. This toolkit is provided by NCBI. It will require you to set up an interactive interface on your command line, on which you dont need to do anything: it wil open, then you can close it, then the software will open for you to do your sample search. The files downloaded this way will be uncompressed fastq files, and will not have the sample names, just the SRR numbers.
+
+The last option is on the GEO page, on 'SRA run selector' at the bottom of the page. Here you can download files related to the raw data (metadata), but not he actual raw data. And this will have more information of each sample, like the sample name, organism, type of data and so on. And you can use a tool called sra-downloader, which will attach the metadata to the data that you have downloaded, eg. with the sra-toolkit.
+
+## Opening fastq files: BS-seq analysis:
+
+Data to be analysed was a series called: GSE68642	Parallel single-cell bisulfite- and RNA-sequencing link transcriptional and epigenetic heterogeneity [Bisulfite-Seq]. From the paper https://www.nature.com/articles/nmeth.3728#Sec1 . I selected data from the well H1 at random.
+
+**How to select a file**: used the EBI ENA website (https://www.ebi.ac.uk/ena) to download the data. Click on Study: SRP058091 - Parallel single-cell bisulfite- and RNA-sequencing link transcriptional and epigenetic heterogeneity [Bisulfite-Seq]. Select 'Sample Title' from the hidden columns. Download files of the type: FASTQ files (FTQ).
+
+
+This section must be done on the commandline, not in R.
+
+
+>getwd()
+>setwd("QC_and_mapping")
+
+###  Quality Control check
+
+Let's start by getting the quality of the sequencing data:
+
+>fastqc *fastq.gz
+
+Once this analysis is complete. We can look at the report that is produced on a webbrowser:
+
+>firefox SRR2876169_1.fastqc.html &
+
+If the command for 'firefox' or 'chrome' doesnt work on your commandline, go to your webbrowser and type:
+>file:///Users/afcl2/Documents/Cambridge/Postdoc/SingleCellOmics/BSseqSearchMtDNA/Rmarkdown/QC_and_mapping
+
+This will allow you to select which file you want to open on the browser from this folder.
+
+Different sections will be visible in the report. Some notes to remember about each section (https://www.youtube.com/watch?v=bz93ReOv87Y):
+* **Per base quality score**:
+    * Red: bad quality
+    * Yellow: average quality
+    * Green: Good quality
+    * Red line: median score
+    * Blue line: mean quality score
+Good quality needs to be above 20.
+
+* **Per tile sequence quality**:
+    * allows you to see whether there is a change in quality score according to the flowcell
+    * with cold colours being positions where the quality was at or above the average for that base in the run, and hotter colours indicate that a tile had worse qualities than other tiles for that base
+    * a good plot should be blue all over
+
+* **Per sequence quality score**:
+    * distribution of means of each sequence
+    * good quality data will have one tight peak of distribution at the high quality end and no peaks at the lower quality region
+    * two peaks suggests that part of the sequencing was bad and needs trimming
+
+* **Per base sequence content***:
+    * parallel lines going across plot showing even distribution of the bases for every position
+    * position should not have a bias for some bases
+    * Libraries produced by priming using random hexamers (including nearly all RNA-Seq libraries) and those which were fragmented using transposases inherit an intrinsic bias in the positions at which reads start. This bias does not concern an absolute sequence, but instead provides enrichement of a number of different K-mers at the 5' end of the reads. Whilst this is a true technical bias, it isn't something which can be corrected by trimming and in most cases doesn't seem to adversely affect the downstream analysis. It will however produce a warning or error in this module. 
+    
+* **Per sequence GC content**:
+    * should be a flat straight line
+    * theoretic curve has the same mean and standard deviation as the sample
+    * a peak with one or two other peaks coming out of it could indicate contaminants in your library
+    * appearance of “bumps” to the side of the distribution may indicate adapter dimers or another library bias
+    * Sharp peaks on an otherwise smooth distribution are normally the result of a specific contaminant (adapter dimers for example), which may well be picked up by the overrepresented sequences module.
+    * Broader peaks may represent contamination with a different species. 
+    
+![Per sequence GC content](QC_and_mapping/SRR2876169_1_fastqc/Images/per_sequence_gc_content.png)    
+
+* **Per base N content**:
+    * shows if there are uncalled bases in my library. If none, then you will see a flat line at the bottom of the plot
+    
+* **Sequence length distribution**:
+    * tells us whether all the sequences are of the same length
+    * you should get one peak at the length size
+    
+* **Sequence duplication levels**:
+    * most sequences should only occur once
+    * duplicates of 1 (so no duplicates) is set by default as 100%, other duplicate numbers will depend on your sample
+    * duplicate 10 refers to > 10
+    * % will usually refer to the number of sequences that are non-unique. In our case (100 - 92.16 = 7.84 non-unique sequences)
+    * the graph on its own can be quite decieving, please look at the percentage in the title of the graph
+    
+* **Overrepresented sequences**:
+    * Looks at sequences that are overrepresented in the dataset. So they need to represent more than 0.01% of the total sequences in the library
+
+* **Adapter content**:
+    * One obvious class of sequences which you might want to analyse are adapter sequences. It is useful to know if your library contains a significant amount of adapter in order to be able to assess whether you need to adapter trim or not.
+    * The plot itself shows a cumulative percentage count of the proportion of your library which has seen each of the adapter sequences at each position. Once a sequence has been seen in a read it is counted as being present right through to the end of the read so the percentages you see will only increase as the read length goes on.
+    * Ideally Illumina sequence data should not have any adapter sequence present, however when using long read lengths it is possible that some of the library inserts are shorter than the read length resulting in read-through to the adapter at the 3’ end of the read. This is more likely to occur with RNA-Seq libraries where the distribution of library insert sizes is more varied and likely to include some short inserts. The example below is for a high quality RNA-Seq library with a small percentage of the library having inserts smaller than 150bp.
+    
+
+![Adapter content](QC_and_mapping/SRR2876169_1_fastqc/Images/adapter_content.png)        
+    
+    
+It seems to be common when there is also 'First Strand Synthesis Primer' contamination, and the example that the 'Parallel" paper gives is: "A large proportion of sequenced fragments are concatemers of the primer used in first strand synthesis which substantially limits the alignment rates of these libraries. It may be possible to improve mapping efficiencies by reducing oligo concentrations or reaction times but this is likely to result in reduced genomic coverage."
+
+It appears that it is common for BS-seq data to show biased "per base sequence content" and biased "per sequence GC content".
+
+
+Questions to consider when looking at the report:
+1. What does the sequence quality look like?
+2. Are there overrepresented sequences or contaminants?
+3. Is there any noticeable difference between read 1 and read 2?
+4. Is there anything else that you can spot in the report that could affect subsequent reports?
+5. Does the data appear to contain read-throughs into the Illumina adapter sequences?
+
+--> One important point here to highlight is how the sequence length for the single cell being analysed is 125. And considering that the previous C measured for methylation was 49 bases before the base that I am interested in, we can be 100% sure that  there are reads covering my base of interest.
+
+### Trimming
+
+It seems like the data might have an adapter contamination. This could be resolved with trimming the data.
+
+> conda install -c bioconda trim-galore
+
+#note that the instalation name is trim-galore and the command to run is trim_galore!
+ 
+> trim_galore --paired --fastqc SRR2876169_1.fastq.gz  SRR2876169_2.fastq.gz
+
+#This step can take around 15 mins for a single cell with paired end data. Imagine trimming for bulk data or all the samples of an experiment!
+  
+  
+Now, we need to confirm that the trimming improved the quality of that data. So, we need to go back to fastqc and open the new files which end with *_1_val_1_fastqc.html* or *_2_val_2_fastqc.html*.
+
+Many features of the quality check worked well. But there are still some issues for example:
+
+**Per base sequence content**:
+Looks worse than before trimming.
+
+![Trimmed per base sequence content](QC_and_mapping/SRR2876169_Trimming_paired-end/SRR2876169_1_val_1_fastqc/Images/per_base_sequence_content.png)    
+
+**Per sequence GC content**:
+Looks exactly as before trimming with two peaks one after the other.
+
+**Sequence length distribution**:
+Looks worse than before trimming.
+
+![Trimmed sequence length distribution](QC_and_mapping/SRR2876169_Trimming_paired-end/SRR2876169_1_val_1_fastqc/Images/sequence_length_distribution.png)  
+
+
+**Adapter content**:
+Looks better after trimming.
+
+![Trimmed adapter content](QC_and_mapping/SRR2876169_Trimming_paired-end/SRR2876169_1_val_1_fastqc/Images/adapter_content.png)  
+
+
+I believe the results for the "Sequence length distribution" and the "Per base sequence content" are worse after trimming. Looking in the paper where the data came from, they suggest us to do the analysis differently. I will try next doing the analysis as they suggest.
+
+#### Trimming as per paper
+
+The paper followed the method of another paper (https://www.nature.com/articles/nmeth.3035#Sec2) which suggests clipping 9bp instead of 6bp. I was curious to see the difference between 9bp clipping and 6bp clipping. So I decided to do both. 
+
+##### 9bp clipping
+Includes clipping a 9bp portion of the reads on both sequences of the pair.
+
+***
+Remember: every time that you want to start using conda on your iMac:
+> echo $PATH
+> source ~/myconda.sh
+> echo $PATH
+
+You need to find the result:
+> /usr/bin:/bin:/usr/sbin:/sbin:/Users/afcl2/miniconda2/bin:/Users/afcl2/miniconda2
+
+***
+
+> trim_galore –-clip_R1 9 -–clip_R2 9 --paired --fastqc SRR2876169_1.fastq.gz  SRR2876169_2.fastq.gz
+
+#dont copy and paste into the terminal, write it out yourself otherwise you might get an error
+
+Similar to before, now, we need to confirm that the trimming improved the quality of that data. So, we need to go back to fastqc and open the new files which end with *_1_val_1_fastqc.html* or *_2_val_2_fastqc.html*.
+
+Many features of the quality check worked well. But there are still some issues for example:
+
+**Per base sequence content**:
+Looks worse than before trimming.
+
+![Trimmed per base sequence content](QC_and_mapping/SRR2876169_Trimming_9bp/SRR2876169_1_val_1_fastqc/Images/per_base_sequence_content.png)    
+
+There are a number of common scenarios which would ellicit a warning or error from this module.
+
+1. Overrepresented sequences: If there is any evidence of overrepresented sequences such as adapter dimers or rRNA in a sample then these sequences may bias the overall composition and their sequence will emerge from this plot.
+
+2. Biased fragmentation: Any library which is generated based on the ligation of random hexamers or through tagmentation should theoretically have good diversity through the sequence, but experience has shown that these libraries always have a selection bias in around the first 12bp of each run. This is due to a biased selection of random primers, but doesn't represent any individually biased sequences. Nearly all RNA-Seq libraries will fail this module because of this bias, but this is not a problem which can be fixed by processing, and it doesn't seem to adversely affect the ablity to measure expression.
+--> this makes sense for our case because random hexamers have been used to generate the library.
+
+3. Biased composition libraries: Some libraries are inherently biased in their sequence composition. The most obvious example would be a library which has been treated with sodium bisulphite which will then have converted most of the cytosines to thymines, meaning that the base composition will be almost devoid of cytosines and will thus trigger an error, despite this being entirely normal for that type of library.
+--> this makes sense for our case because sodium bisulphite treatment was used, therefore there will be more Ts and less Cs in the sequences being analysed. This is veery clear when looking at the bulk oocyte data.
+
+4. If you are analysing a library which has been aggressivley adapter trimmed then you will naturally introduce a composition bias at the end of the reads as sequences which happen to match short stretches of adapter are removed, leaving only sequences which do not match. Sudden deviations in composition at the end of libraries which have undergone aggressive trimming are therefore likely to be spurious.
+--> this also makes sense for our case because we only see a composition bias at the end of the reads after trimming has taken place.
+
+
+**Per sequence GC content**:
+Looks exactly as before trimming with two peaks one after the other.
+
+**Sequence length distribution**:
+Looks worse than before trimming.
+
+![Trimmed sequence length distribution](QC_and_mapping/SRR2876169_Trimming_9bp/SRR2876169_1_val_1_fastqc/Images/sequence_length_distribution.png)  
+
+
+Turns out that this is commonly seen after trimming (https://www.biostars.org/p/321785/). In the case of *sequence length distribution* the best is to see how it looks before trimming, and not to be afraid of this result after trimming. This is the case because shorter reads than a certain length are removed as part of the trimming and adaptor cleaning. 
+
+***Overrepresented sequences***:
+Before trimming there were no overrepresented sequences.
+
+Sequence                                           |	Count	| Percentage	        | Possible Source
+---------------------------------------------------|--------|---------------------|------------------
+GGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGGTTAGGG |	8025  |	0.1481989533552797	| No Hit
+
+
+**Adapter content**:
+Looks better after trimming. But just like with the previous trimming.
+
+
+##### 6bp clipping
+Includes clipping the 6N random priming portion of the reads on both sequences of the pair.
+
+> trim_galore –-clip_R1 6 -–clip_R2 6 --paired --fastqc SRR2876169_1.fastq.gz  SRR2876169_2.fastq.gz
+
+#dont copy and paste into the terminal, write it out yourself otherwise you might get an error
+ 
+ 
+ The results by eye look the same as when trimming 9bp or without clipping. The biggest problem is that there are two peaks in GC content, which suggests a contamination. Mus musculus GC content should be around 40%, and *E. coli* GC content is around 20%. Another reason for this could be due to adapter dimers (https://sequencing.qcfail.com/articles/?report=reader veeery bottom of page). The introduction of a number of identical sequences (adapter dimers) can show up as a sharp spike in the overall GC profile for the run. this can also often show up in the overrepresented sequences, and in the "per base sequence content" section. Adapter trimmers will generally remove this sort of data, but even without these being removed the dimers do not normally map to a reference genome so don’t cause any further downstream disruption.
+ 
+
+### Alignment
+
+Bismark is often used to do both alignment and methylation calling. But, can we find a package that can do alignment without methylation calling?
+
+Another question to ask when tackling the end problem is:
+- Can we align all the reads to the reference genome, and then pick out the frequency of our specific position?
+- OR: Can we align a piece of our reference genome which has our specific position and then pick out the frequency of this position?
+- OR: aligne all the reads, select out the mtDNA reads, then analyse heteroplasmy? (https://science.sciencemag.org/content/364/6442/eaau6520/tab-pdf)
+- are there tools to analyse heteroplasmy? (Book: The human mitochondrial genome - From basic biology to disease. 2020. Chapter 11)
+
+
+Current knowledge:
+- SeqMonk accepts BAM files as input
+- Bismark is used in multiple steps (alignment, deduplication and methylation extraction). So it seems like I can use bismark instead of bowtie2 to align my reads
+- https://www.ebi.ac.uk/sites/ebi.ac.uk/files/content.ebi.ac.uk/materials/2014/140217_AgriOmics/dan_bolser_snp_calling.pdf
+- samtools sort: is necessary to sort the reads instead of by starting from order of discovery to leftmost coordinates
+- bcftools consensus --haplotype A: 
+- bcftools call --consensus-caller: 
+- mtDNA-Server: calculates heteroplasmies from FASTQ or BAM files
+
+
+### Can I find our how many reads are in position 5024 by measuring CpH reads?
+
+
+
+
+
+### mtDNA-Server
+
+There appears to be a website that allows us to input FASTQ or BAM files and calculates mitochondrial heteroplasmy called mtDNA-Server (https://mtdna-server.uibk.ac.at/), this can be used on a webbrowser and can take up to 1GB of data.
+
+I used the file SRR2876085_1.fastq.gz to do a test. The problem is that I am not sure that using fastq.gz is the same as using a fastq file. So maybe I can produce a BAM file and then load it again in the system and see if it still gives me the same results. --> Correction: mtDNA-Server does support fastq.gz files!
+
+The results are:
+- https://mtdna-server.uibk.ac.at/share/results/7154444a54ba5036b538393a838e69c1/report.html
+- https://mtdna-server.uibk.ac.at/share/results/b08f76cb560cbf7e69dd84c9350bdcce/heteroplasmies.txt
+- https://mtdna-server.uibk.ac.at/share/results/27e8b2c42c091d96dc5f57c9586e01a2/variants.txt
+- https://mtdna-server.uibk.ac.at/share/results/aea04261a891f6ff1f6d4e6f7be5b749/haplogroups.txt
+- https://mtdna-server.uibk.ac.at/share/results/92c58da5cbd0ac96ec6df5de63ec51c7/raw.txt
+- https://mtdna-server.uibk.ac.at/share/results/7b5389e302374f3dad1f004d6237aad2/SRR2876085_1.gz_rCRS.bam
+
+This has raised some questions:
+- are the genes that show heteroplasmy in tRNA with poly-A-tails or on coding genes?
+- can i use data where i know where is a heteroplasmy is and check for the reliability of this website?
+- can i find and test single cell data using this?
+- can i compare these results to those from another tool? Like MToolBox?
+- is there enough coverage of the mtDNA to measure mtDNA heteroplasmy?
+
+This other tool MToolBox can only take 50MB on its webbrowser version.
+
+
+The study that I am looking at uses ESC mouse cells and oocytes as controls. I was just clooking at ESCs which have an average of 500 mitochondria copy numbers. It could be that the many copy as lost in the wet lab processing, or during the pipeline for trimming the adaptors off and aligning the sequences and so on. But, oocytes of stage MII (metaphase II) should have around 200,000 mitochondria. If the same rate of loss happens here, I should still be able to get still around 4000 reads to work with.
+
+When testing for mtDNA heteroplasmy using the MToolBox, I should try a couple of samples, eg.:
+- single oocyte: https://www.ebi.ac.uk/ena/data/view/SRX520365 : SRR1248455_1.fastq.gz SRR1248455_2.fastq.gz
+- bulk oocytes: https://www.ebi.ac.uk/ena/data/view/SRX520366 : SRR1248456_1.fastq.gz  SRR1248456_2.fastq.gz
+- single ESC: https://www.ebi.ac.uk/ena/data/view/SRX1403237 : SRR2876085_1.fastq.gz  SRR2876085_2.fastq.gz
+- bulk ESCs: https://www.ebi.ac.uk/ena/data/view/SRX520407 : SRR1248497_1.fastq.gz  SRR1248497_2.fastq.gz
+
+Oocytes bulk, oocyte single cell and ESC bulk data came from another study: https://www.nature.com/articles/nmeth.3035#Sec10 (Single-cell genome-wide bisulfite sequencing for assessing epigenetic heterogeneity).
+Single ESC data came from the study: https://www.nature.com/articles/nmeth.3728#Sec2 (Parallel single-cell sequencing links transcriptional and epigenetic heterogeneity).
+
+In other to make a fair comparison, I found single ESC data also from the *same* study as the oocytes bulk, oocytes single cell and ESC bulk. SRR1248496_1.fastq.gz SRR1248496_2.fastq.gz
+
+Moreover, turns out that this study also sequenced single oocytes at almost the saturation level of sequencing. For example in data SRR1411189_1.fastq.gz SRR1411189_2.fastq.gz
+
+Try Melissa for clustering DNA methylation?
+https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1665-8
+
+Discoveries since started to work on MToolBox:
+
+1. it does not work with .fq.gz files which are supposed to be fastq files. You must change to .fastq.gz
+2. there is very little coverage for the oocytes MII single cell
+3. running MToolBox with minimum reads of 5 gives the same results (.pileup file) as with minimum reads of 1
+4. running MToolBox with minimum reads of 5 allows the full MToolBox process to run, so you get all the file outputs
+5. trimming files increases the number of reads that are aligned to the reference genome
+
+#### Comparing trimmed and untrimmed data:
+
+![Coverage single oocyte not trimmed](MToolBox_data/Oocytes_SingleCell/Oocyte_single_igv_Coverage_panel.png)  
+
+
+
+
+
+
+![Trimmed coverage single oocyte](MToolBox_data/Oocytes_SingleCell/Oocytes_SingleCell_Trimmed/Oocyte_single_trimmed_igv_Coverage_panel.png)  
+
+
+#### No need for trimming?
+
+Some sequenced samples appear to not need trimming because there is no adaptor contamination in the sequencing data. This was the case for the bulk oocyte and ESC data. But it did show an unusual duplicate sequencing pattern as seen bellow:
+
+
+![Duplicated sequece](Fastqc_data/SRR1248456_1_fastqc/Images/duplication_levels.png)
+
+
+
+"A warning or error in this module is simply a statement that you have exhausted the diversity in at least part of your library and are re-sequencing the same sequences. In a supposedly diverse library this would suggest that the diversity has been partially or completely exhausted and that you are therefore wasting sequencing capacity. However in some library types you will naturally tend to over-sequence parts of the library and therefore generate duplication and will therefore expect to see warnings or error from this module." "This level of duplication may not be ideal, but it should not cause a major problem for you in downstream analyses. As you mentioned, there is disagreement in the field of sequencing about the importance of removing these duplicate sequences." Moreover "PCR duplicates are another possible cause." Multiple PCR amplification steps can lead to high duplication levels.
+
+The conclusion from this being, that nothing needs to be done to improve the quality of this sample sequencing data.
+
+
+## Calculating mtDNA heteroplasmy from raw data:
+
+Papers to read that could help:
+https://www.biorxiv.org/content/10.1101/232033v1.full
+
+https://onlinelibrary.wiley.com/doi/full/10.1111/mec.14792
+
+https://samtools.github.io/hts-specs/SAMv1.pdf  General paper on SAM and BAM
+
+https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1005306#sec002    From this try:
+ -in bcftools mpileup:
+    -B, --no-BAQ
+    Disable probabilistic realignment for the computation of base alignment quality (BAQ). BAQ is the Phred-scaled probability of a read base being misaligned. Applying this option greatly helps to reduce false SNPs caused by misalignments. 
+     -q, -min-MQ INT
+    Minimum mapping quality for an alignment to be used [0]  --> based on paper: try 20
+     -Q, --min-BQ INT
+    Minimum base quality for a base to be considered [13] --> based on paper: try 20 --> went for 5 (usual for heteroplasmy calling)
+ -in bcftools view:
+    bcftools view -i '%ID!="." & MAF[0]<0.01' --> based on paper: use MAF 0.04%
+ -in bcftools mpileup or call:
+     -g, --gvcf INT[,…]
+    output gVCF blocks of homozygous REF calls, with depth (DP) ranges specified by the list of integers. For example, passing 5,15 will group sites into two types of gVCF blocks, the first with minimum per-sample DP from the interval [5,15) and the latter with minimum depth 15 or more. In this example, sites with minimum per-sample depth less than 5 will be printed as separate records, outside of gVCF blocks. --> based on paper: minimum depth 10
+ - double strand validation --> 2 reads on each strand using FS?  http://evomics.org/learning/population-and-speciation-genomics/2020-population-and-speciation-genomics/first-steps-in-genomic-data-analysis/
+                            --> not useful for mitochondria because of high copy numbers  https://www.nature.com/articles/s41587-020-0645-6
+                            
+ - number of mismatches
+ 
+ 
+ Options to run with samtools:
+    -q: mapping quality > 20
+    -F 0x100 --> secondary alignments removed
+    
+    
+# New chapter: Post-Lab meeting:
+
+## Does GC content affect sequencing reads?
+
+https://pubmed.ncbi.nlm.nih.gov/23638157/#&gid=article-figures&pid=figure-1-uid-0
+
+According to this paper samples with a negative GC bias, tend to have less coverage the more GC content that there is.
+Does that mitochondrial DNA region which is not sequencing well have a high GC content? Perhaps compared to the rest of the mtDNA?
+
+
+## Which commands to use for Bismark?
+
+https://www.epigenesys.eu/images/stories/protocols/pdf/20120720103700_p57.pdf
+
+--Bowtie2 is very slow
+
+## Basic biology:
+
+DNA has 2 strands: forward and reverse, also known as the main and complementary strand, or in terms of mitochondrial DNA, the L (light) strand and the H (heavy) strand.
+
+## Does bismark remove secondary and supplementary alignments?
+
+"A read is considered to align uniquely if an alignment has a unique best alignment score (as reported by the AS:i field). If a read produces several alignments with the same number of mismatches or with the same alignment score (AS:i field), a read (or a read-pair) is discarded altogether."
+Does this mean that all reads that are not primary are not considered? 
+
+
+## Human samples of scBS-seq
+
+First study: https://genomemedicine.biomedcentral.com/articles/10.1186/s13073-019-0694-y#Sec2 with data available using GEO: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi
+
+Second study: https://www.cell.com/stem-cell-reports/fulltext/S2213-6711(17)30233-3?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS2213671117302333%3Fshowall%3Dtrue#supplementaryMaterial with data available using GEO https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE71985 and SRA https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM1849306 this case is special, I can only find the data in EBI ENA using SRX numbers for each individual sample, eg. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM1849306 . This study is special in that it was done as single-end sequencing.
+
+Third study: https://www.cell.com/cell-reports/fulltext/S2211-1247(15)00109-6#secsectitle0060 with data available using GEO https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE65196 . This study uses a variety of human and mouse cell lines KBM7 (human chronic myelogenous leukemia (CML) cell line), CCE (mouse embryonic stem cells), K562 (human erythroleukemic cell line), 32D (mouse bone marrow), HL60 (human peripheral blood leukocytes cell line). This study is special in that each sample was done in replicate of 3-6. Sample names and cell type:
+- SRR1769068: K562.1_2
+- SRR1769070: K562.1_3
+- SRR1769091: HL60.1_1
+- SRR1769093: HL60.1_2
+- SRR1769095: HL60.1_3
+- SRR1769097: HL60.1_4
+- SRR1769197: K562.1_6
+- SRR1769199: K562.1_7
+- SRR1769201: K562.1_8
+- SRR1769220: K562.1_SC3
+- SRR1769231: KBM7.1_1
+- SRR1769233: KBM7.1_2
+- SRR1769235: KBM7.1_3
+
+
+
+Some other papers seemed interesting but they did not submitt their data online and freely available yet. Some of these are:
+https://www.cell.com/stem-cell-reports/fulltext/S2213-6711(18)30308-4?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS2213671118303084%3Fshowall%3Dtrue#secsectitle0115
+
+https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1921-y#availability-of-data-and-materials
+
+This paper suggests some other techniques other than scBS-seq that use human cells: https://www.cell.com/neuron/fulltext/S0896-6273(20)30969-7?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS0896627320309697%3Fshowall%3Dtrue#secsectitle0070
+
+
+## Mitochondrial Copy Number
+
+There was a massive variability when looking at the coverage of the different humans samples. To confirm that this variability is due to different numbers of mitochondrial DNA per cell, I decided to use the tool that Tom developed.
+
+To give a reference point, oocytes at metaphase II tend to have between 50.000 to 1.500.000 mtDNA copies (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2888963/).
+
+
+    
